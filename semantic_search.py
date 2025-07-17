@@ -1,19 +1,11 @@
 from flask import Flask, request, jsonify
-from transformers import AutoTokenizer, AutoModel
+from flask_cors import CORS
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import torch
 import os
 
 app = Flask(__name__)
-
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-
-def get_embedding(text):
-    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    return outputs.last_hidden_state[:, 0, :].numpy()
+CORS(app)
 
 @app.route('/search', methods=['POST'])
 def search():
@@ -22,15 +14,17 @@ def search():
     query = data.get('query', '')
 
     if not emails or not query:
-        return jsonify({'best_match': ''})
+        return jsonify({'best_match': 'No results found'}), 400
 
-    query_embedding = get_embedding(query)
-    email_embeddings = [get_embedding(email) for email in emails]
+    vectorizer = TfidfVectorizer().fit(emails + [query])
+    vectors = vectorizer.transform(emails + [query])
+    similarities = cosine_similarity(vectors[-1], vectors[:-1]).flatten()
 
-    sims = cosine_similarity(query_embedding, email_embeddings).flatten()
-    best_index = sims.argmax()
-    return jsonify({'best_match': emails[best_index]})
+    best_index = similarities.argmax()
+    best_email = emails[best_index] if similarities[best_index] > 0 else 'No relevant match found'
+
+    return jsonify({'best_match': best_email})
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
